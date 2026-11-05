@@ -1,0 +1,18 @@
+{
+  "name": "lanca-mongodb",
+  "version": "1.0.0",
+  "description": "Modelo de dados em MongoDB do Lança: gestão financeira para pequenos negócios com lançamento por mensagem e IA",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "setup": "node --env-file-if-exists=.env src/setup.js",
+    "setup:reset": "node --env-file-if-exists=.env src/setup.js --reset",
+    "queries": "node --env-file-if-exists=.env src/queries.js"
+  },
+  "dependencies": {
+    "mongodb": "^7.8.0"
+  }
+}
