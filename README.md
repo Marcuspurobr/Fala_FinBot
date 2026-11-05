@@ -1,6 +1,6 @@
 # Lança: modelo de dados em MongoDB
 
-Repositório acadêmico da disciplina de NoSQL. Ele reúne a descrição do sistema **Lança** (nome provisório) e o código que cria o banco, as coleções e documentos de exemplo no MongoDB online (MongoDB Atlas).
+Repositório acadêmico da disciplina de NoSQL. Ele reúne a descrição do sistema **Fala_FinBot** e o código que cria o banco, as coleções e documentos de exemplo no MongoDB online (MongoDB Atlas).
 
 ## 1. Descrição do sistema
 
