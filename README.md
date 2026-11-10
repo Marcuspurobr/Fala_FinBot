@@ -115,3 +115,52 @@ O arquivo `.env` não vai para o repositório (está no `.gitignore`), então a 
 Depois do `npm run setup`, os dados aparecem no Atlas em **Database, Browse Collections, lanca**.
 
 Todos os dados de exemplo (empresas, e-mails, identificadores de chat, valores) são fictícios. O hash de senha dos usuários de exemplo também é inventado e não corresponde a nenhuma senha real.
+
+
+## 5. Consultas (views)
+
+As duas consultas abaixo foram criadas no MongoDB Atlas como views da coleção `lancamentos`. Cada uma é um aggregation pipeline, ou seja, uma sequência de estágios em que a saída de um alimenta o próximo. Os valores estão guardados em centavos.
+
+### View `Funcionalidade1`: despesas por categoria
+
+Mostra quanto foi gasto em cada categoria, da maior despesa para a menor. Serve para o dono ver rapidamente onde o dinheiro está indo.
+
+1. `$match` deixa passar só os lançamentos do tipo despesa.
+2. `$group` agrupa os lançamentos pela categoria e soma o valor de cada grupo.
+3. `$sort` ordena do maior total para o menor.
+
+```js
+[
+  { $match: { tipo: "despesa" } },
+  { $group: { _id: "$categoria", total: { $sum: "$valorCentavos" } } },
+  { $sort: { total: -1 } }
+]
+```
+
+Com os dados de exemplo, a categoria com maior gasto é Fornecedores, e a menor é Internet. Como a coleção reúne as duas empresas de exemplo, categorias com o mesmo nome (como Aluguel) aparecem somadas.
+
+![Resultado da view Funcionalidade1](prints/funcionalidade1.png)
+
+### View `Funcionalidade2`: resumo mensal
+
+Compara receitas e despesas de cada mês e calcula o saldo (receitas menos despesas). Serve para acompanhar se o negócio fechou o mês no azul ou no vermelho.
+
+1. `$group` agrupa os lançamentos por mês, recortando os sete primeiros caracteres da data (por exemplo, `2026-10`). Em cada grupo, um `$cond` soma o valor só dos lançamentos de receita em um campo e só dos de despesa em outro.
+2. `$project` mostra o mês, as receitas e as despesas, e cria o campo `saldo` com a diferença entre os dois.
+3. `$sort` ordena os meses do mais antigo para o mais recente.
+
+```js
+[
+  { $group: {
+      _id: { $substrBytes: ["$data", 0, 7] },
+      receitas: { $sum: { $cond: [ { $eq: ["$tipo", "receita"] }, "$valorCentavos", 0 ] } },
+      despesas: { $sum: { $cond: [ { $eq: ["$tipo", "despesa"] }, "$valorCentavos", 0 ] } }
+  } },
+  { $project: { _id: 0, mes: "$_id", receitas: 1, despesas: 1, saldo: { $subtract: ["$receitas", "$despesas"] } } },
+  { $sort: { mes: 1 } }
+]
+```
+
+Com os dados de exemplo, os meses de agosto a outubro fecham com saldo positivo. Novembro aparece negativo porque os lançamentos de exemplo só vão até o início do mês e as despesas dos primeiros dias vieram antes das vendas.
+
+![Resultado da view Funcionalidade2](prints/funcionalidade2.png)
