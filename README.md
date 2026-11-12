@@ -228,7 +228,9 @@ Mostra quanto foi gasto em cada categoria, da maior despesa para a menor. Serve 
 
 Com os dados de exemplo, a categoria com maior gasto é Fornecedores, e a menor é Internet. Como a coleção reúne as duas empresas de exemplo, categorias com o mesmo nome (como Aluguel) aparecem somadas.
 
-![Resultado da view Funcionalidade1](prints/Funcionalidade1.png)
+![Resultado da view Funcionalidade1, parte 1](prints/Funcionalidade1_1.png)
+
+![Resultado da view Funcionalidade1, parte 2](prints/Funcionalidade1_2.png)
 
 ### View `Funcionalidade2`: resumo mensal
 
