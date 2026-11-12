@@ -40,62 +40,64 @@ Para ser honesto, esse sistema também poderia ser feito em um banco relacional,
 
 O modelo tem 4 coleções. Os objetos que só fazem sentido dentro de um documento ficam embutidos nele, e o que precisa existir sozinho ou ser consultado por conta própria fica em outra coleção, ligado por identificador.
 
+Os nomes no diagrama representam documentos das coleções, e as linhas indicam referências por identificador (o MongoDB não impõe integridade referencial, então quem mantém essas referências é a aplicação). As regras de validação e os índices estão em `src/collections.js`.
+
 ```mermaid
 erDiagram
-    empresas ||--o{ usuarios : empresaId
-    empresas ||--o{ mensagens : empresaId
-    empresas ||--o{ lancamentos : empresaId
-    usuarios ||--o{ mensagens : usuarioId
-    mensagens |o--o| lancamentos : "lancamentoId e mensagemId"
+    empresas ||--o{ usuarios : "possui usuarios"
+    empresas ||--o{ mensagens : "recebe mensagens"
+    empresas ||--o{ lancamentos : "possui lancamentos"
+    usuarios ||--o{ mensagens : "envia mensagens"
+    mensagens |o--o| lancamentos : "pode gerar"
 
     empresas {
-        ObjectId _id PK
+        ObjectId _id "identificador do documento"
         string nome
         string segmento
-        array categorias "nome e tipo de cada categoria"
+        array categorias
         date criadaEm
     }
 
     usuarios {
-        ObjectId _id PK
-        ObjectId empresaId FK
+        ObjectId _id "identificador do documento"
+        ObjectId empresaId "referência a empresas._id"
         string nome
         string email
         string senhaHash
-        object canalMensagem "opcional: tipo e id do chat"
+        object canalMensagem "opcional"
         date criadoEm
     }
 
     mensagens {
-        ObjectId _id PK
-        ObjectId empresaId FK
-        ObjectId usuarioId FK
+        ObjectId _id "identificador do documento"
+        ObjectId empresaId "referência a empresas._id"
+        ObjectId usuarioId "referência a usuarios._id"
         string texto
         date recebidaEm
-        object interpretacao "tipo, valorCentavos, categoria, data e confianca"
-        string status
-        ObjectId lancamentoId FK "opcional"
+        object interpretacao "opcional"
+        string status "pendente, confirmada, corrigida, automatica ou descartada"
+        ObjectId lancamentoId "referência a lancamentos._id, opcional"
     }
 
     lancamentos {
-        ObjectId _id PK
-        ObjectId empresaId FK
-        string tipo
+        ObjectId _id "identificador do documento"
+        ObjectId empresaId "referência a empresas._id"
+        string tipo "receita ou despesa"
         int valorCentavos
         string categoria
         string descricao
         string data
         string origem
-        ObjectId mensagemId FK "opcional, so quando origem e mensagem"
-        object parcelas "opcional: total e atual"
-        object recorrencia "opcional: frequencia e ate"
-        object comprovante "opcional: nomeArquivo e url"
+        ObjectId mensagemId "referência a mensagens._id, opcional"
+        object parcelas "opcional"
+        object recorrencia "opcional"
+        object comprovante "opcional"
         array tags "opcional"
         date criadoEm
     }
 ```
 
-As linhas indicam referências por identificador, e cada nome representa os documentos daquela coleção. O que aparece como `object` ou `array` não é outra coleção: fica dentro do próprio documento.
+O que aparece como `object` ou `array` não é outra coleção: fica dentro do próprio documento.
 
 ### Embutir ou referenciar
 
