@@ -1,4 +1,4 @@
-// Definição das 4 coleções do banco "lanca".
+// Definição das 4 coleções do banco "finbot".
 // Cada coleção tem:
 //   - validator: regras ($jsonSchema) que o MongoDB confere antes de aceitar um documento;
 //   - indexes: índices para buscas rápidas e para garantir valores únicos.

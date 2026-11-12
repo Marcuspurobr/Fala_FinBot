@@ -1,7 +1,7 @@
 {
-  "name": "lanca-mongodb",
+  "name": "Fala_FinBot-mongodb",
   "version": "1.0.0",
-  "description": "Modelo de dados em MongoDB do Lança: gestão financeira para pequenos negócios com lançamento por mensagem e IA",
+  "description": "Modelo de dados em MongoDB do Fala_FinBot: gestão financeira para pequenos negócios com lançamento por mensagem e IA",
   "private": true,
   "type": "module",
   "engines": {

@@ -1,4 +1,4 @@
-// Cria o banco "lanca", as 4 coleções (com validação e índices) e insere os documentos de exemplo.
+// Cria o banco "finbot", as 4 coleções (com validação e índices) e insere os documentos de exemplo.
 //
 //   npm run setup        -> cria o que falta; coleções que já têm dados não são mexidas
 //   npm run setup:reset  -> apaga as 4 coleções e cria tudo de novo
