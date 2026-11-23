@@ -16,9 +16,9 @@ A entrada de dados fica tão simples quanto mandar uma mensagem. O fluxo de uma 
 
 1. O dono escreve no chat, em texto livre.
 2. O sistema identifica quem é o usuário e de qual empresa ele é, e manda a mensagem para a IA junto com a data de hoje e as categorias daquela empresa.
-3. A IA devolve uma interpretação (tipo, valor, categoria, data e um grau de confiança), que fica guardada na própria mensagem.
+3. A IA devolve uma interpretação (tipo, valor, categoria, data e um grau de confiança), que só vai para o banco junto com o lançamento, dentro do campo `mensagem`.
 4. Se a confiança for baixa ou faltar alguma informação, o sistema pergunta ao dono antes de gravar. Se for alta, pode gravar direto e avisar, com a opção de desfazer.
-5. Confirmada a interpretação, o sistema cria o lançamento, que é o registro oficial e alimenta o painel.
+5. Confirmada a interpretação, o sistema cria o lançamento, que é o registro oficial e alimenta o painel, e guarda dentro dele a mensagem original e o que a IA entendeu.
 
 A IA só interpreta o texto. As somas, os comparativos e os filtros do painel são feitos pelo banco, que é exato.
 
@@ -32,23 +32,21 @@ Ele controla o fluxo de caixa. Não gera balanço patrimonial, e uma DRE complet
 
 ### Por que MongoDB
 
-Os pontos em que o modelo de documento ajuda de verdade são três. O primeiro é a interpretação da IA, que tem formato variável e fica guardada junto com o texto original e o status, o que dá um histórico do que a IA entendeu e permite medir a taxa de acerto. O segundo são os campos opcionais dos lançamentos: um lançamento simples tem só os campos básicos, e um parcelado, recorrente ou com comprovante carrega a mais o que precisa, sem colunas vazias. O terceiro é que as categorias de cada empresa ficam dentro do documento dela, sem tabela extra.
+Os pontos em que o modelo de documento ajuda de verdade são três. O primeiro é a interpretação da IA, que tem formato variável e fica guardada junto com o texto original e o status, dentro do próprio lançamento, o que dá um histórico do que a IA entendeu e permite medir a taxa de acerto. O segundo são os campos opcionais dos lançamentos: um lançamento simples tem só os campos básicos, e um parcelado, recorrente ou com comprovante carrega a mais o que precisa, sem colunas vazias. O terceiro é que as categorias de cada empresa ficam dentro do documento dela, sem tabela extra.
 
 Para ser honesto, esse sistema também poderia ser feito em um banco relacional, e um Postgres com campos JSON resolveria boa parte. A escolha pelo MongoDB aqui se apoia no encaixe do modelo de documento com o fluxo de mensagens e interpretações, e não em uma limitação do SQL. Mesmo sendo flexível, o banco valida os documentos com `$jsonSchema`, para não aceitar dado errado, e o dinheiro é guardado em centavos, como número inteiro, para não ter erro de arredondamento.
 
 ## 2. Modelagem
 
-O modelo tem 4 coleções. Os objetos que só fazem sentido dentro de um documento ficam embutidos nele, e o que precisa existir sozinho ou ser consultado por conta própria fica em outra coleção, ligado por identificador.
+O modelo tem 3 coleções. Os objetos que só fazem sentido dentro de um documento ficam embutidos nele, e o que precisa existir sozinho ou ser consultado por conta própria fica em outra coleção, ligado por identificador. A mensagem do chat não tem coleção própria: ela fica embutida no lançamento que gerou.
 
 Os nomes no diagrama representam documentos das coleções, e as linhas indicam referências por identificador (o MongoDB não impõe integridade referencial, então quem mantém essas referências é a aplicação). As regras de validação e os índices estão em `src/collections.js`.
 
 ```mermaid
 erDiagram
     empresas ||--o{ usuarios : "possui usuarios"
-    empresas ||--o{ mensagens : "recebe mensagens"
     empresas ||--o{ lancamentos : "possui lancamentos"
-    usuarios ||--o{ mensagens : "envia mensagens"
-    mensagens |o--o| lancamentos : "pode gerar"
+    usuarios ||--o{ lancamentos : "envia mensagens que geram"
 
     empresas {
         ObjectId _id "identificador do documento"
@@ -68,17 +66,6 @@ erDiagram
         date criadoEm
     }
 
-    mensagens {
-        ObjectId _id "identificador do documento"
-        ObjectId empresaId "referência a empresas._id"
-        ObjectId usuarioId "referência a usuarios._id"
-        string texto
-        date recebidaEm
-        object interpretacao "opcional"
-        string status "pendente, confirmada, corrigida, automatica ou descartada"
-        ObjectId lancamentoId "referência a lancamentos._id, opcional"
-    }
-
     lancamentos {
         ObjectId _id "identificador do documento"
         ObjectId empresaId "referência a empresas._id"
@@ -88,7 +75,7 @@ erDiagram
         string descricao
         string data
         string origem
-        ObjectId mensagemId "referência a mensagens._id, opcional"
+        object mensagem "opcional, só quando origem é mensagem"
         object parcelas "opcional"
         object recorrencia "opcional"
         object comprovante "opcional"
@@ -97,62 +84,69 @@ erDiagram
     }
 ```
 
-O que aparece como `object` ou `array` não é outra coleção: fica dentro do próprio documento.
+O que aparece como `object` ou `array` não é outra coleção: fica dentro do próprio documento. O campo `mensagem` guarda o `usuarioId` de quem mandou (referência a `usuarios._id`), o texto, a data de recebimento, a interpretação da IA e o status, que pode ser `confirmada`, `corrigida` ou `automatica`.
 
 ### Embutir ou referenciar
 
 | Decisão | Justificativa |
 |---|---|
-| `interpretacao` embutida em `mensagens` | A resposta da IA só faz sentido junto com o texto que ela leu, e é sempre lida com a mensagem. Guardar os dois juntos também permite medir a taxa de acerto depois. |
+| `mensagem` embutida em `lancamentos` | O texto original e a resposta da IA só importam junto com o lançamento que eles geraram, e são sempre lidos com ele. Guardar tudo junto também permite medir a taxa de acerto depois, sem uma coleção a mais. |
 | `categorias` embutidas em `empresas` | Cada empresa define as suas, são poucas e sempre lidas junto com a empresa, então não vale uma coleção à parte. |
 | `canalMensagem` embutido em `usuarios` | É só o chat do usuário (tipo e id), pequeno e usado para descobrir a empresa a partir da mensagem recebida. |
 | `parcelas`, `recorrencia`, `comprovante` e `tags` embutidos em `lancamentos` | São campos opcionais que pertencem a um único lançamento. Quem não usa não carrega nada. |
 | `lancamentos` como coleção separada | É o registro oficial e existe mesmo sem mensagem, quando vem do site. Também é a coleção que o painel mais consulta e soma. |
-| `mensagens` como coleção separada | Uma mensagem chega antes de virar lançamento e pode nunca virar (se for descartada), então não pode viver dentro do lançamento. |
 | `usuarios` como coleção separada | O usuário faz login por conta própria e é buscado por e-mail ou pelo chat, sem passar pela empresa. |
 | `empresaId` em quase tudo | É a referência que isola os dados de cada negócio, e as consultas sempre filtram por ela. |
-| `lancamentoId` e `mensagemId` | Ligam a mensagem ao lançamento que ela gerou e o lançamento à mensagem de origem, o que dá a trilha de auditoria. |
+| `mensagem.usuarioId` | Liga o lançamento ao usuário que mandou a mensagem, para saber quem registrou cada um. |
 
 ### Interesse do usuário
 
 | Coleção | O que o dono quer saber | Agregação prevista |
 |---|---|---|
 | `lancamentos` | Onde o dinheiro está indo e como cada mês fechou | `$match`, `$group` e `$sort` por categoria; `$group`, `$project` e `$sort` por mês |
-| `mensagens` | Se a IA está acertando as classificações | `$group` por `status` |
+| `lancamentos` (campo `mensagem`) | Se a IA está acertando as classificações | `$match` nos lançamentos que têm mensagem e `$group` por `mensagem.status` |
 | `empresas` | Quais categorias cada negócio usa | `$unwind` na lista de `categorias` |
 | `usuarios` | Quem tem acesso à empresa | Consulta simples por `empresaId`, sem agregação |
 
 ## 3. O banco de dados
 
-O banco se chama `finbot` e tem 4 coleções:
+O banco se chama `finbot` e tem 3 coleções:
 
 | Coleção | O que guarda |
 |---|---|
 | `empresas` | Cada negócio que usa o sistema, com o segmento e as categorias de receita e despesa que ele definiu |
-| `usuarios` | O dono (ou quem a empresa autoriza): login por e-mail e senha (só o hash) e o canal do chat, que liga a mensagem à empresa certa |
-| `mensagens` | Tudo que chega pelo chat, antes de virar lançamento: texto original, interpretação da IA e status |
-| `lancamentos` | O registro oficial de receitas e despesas, vindo do chat ou do site. É a base do painel |
+| `usuarios` | O dono (ou quem a empresa autoriza): login por e-mail e senha (só o hash) e o canal do chat, que liga a mensagem recebida à empresa certa |
+| `lancamentos` | O registro oficial de receitas e despesas, vindo do chat ou do site. Quando vem do chat, guarda embutida a mensagem original, a interpretação da IA e o status. É a base do painel |
 
-As ligações entre elas são feitas por identificadores. `usuarios`, `mensagens` e `lancamentos` apontam para a empresa por `empresaId`. A mensagem aponta para o lançamento que gerou (`lancamentoId`) e o lançamento aponta de volta para a mensagem de origem (`mensagemId`), o que dá a trilha de auditoria. Lançamentos feitos pelo site não passam por `mensagens` e não têm `mensagemId`.
+As ligações entre elas são feitas por identificadores. `usuarios` e `lancamentos` apontam para a empresa por `empresaId`, e a mensagem embutida no lançamento aponta para quem a mandou por `mensagem.usuarioId`. Lançamentos feitos pelo site não têm o campo `mensagem`.
 
-O status de uma mensagem pode ser `pendente` (esperando o dono), `confirmada`, `corrigida` (o dono ajustou algum campo), `automatica` (gravada sem perguntar, por confiança alta) ou `descartada` (o dono recusou).
+O status da mensagem embutida pode ser `confirmada`, `corrigida` (o dono ajustou algum campo) ou `automatica` (gravada sem perguntar, por confiança alta). As mensagens que ainda esperam resposta do dono (`pendente`) ou que ele recusou (`descartada`) não geram lançamento e, por isso, não são guardadas no banco.
 
-Um exemplo de documento da coleção `mensagens`:
+Um exemplo de documento da coleção `lancamentos`, vindo do chat:
 
 ```json
 {
   "empresaId": "ObjectId(...)",
-  "usuarioId": "ObjectId(...)",
-  "texto": "paguei 180 de energia hoje",
-  "recebidaEm": "2026-10-29T22:20:00Z",
-  "interpretacao": {
-    "tipo": "despesa",
-    "valorCentavos": 18000,
-    "categoria": "Energia",
-    "data": "2026-10-29",
-    "confianca": 0.94
+  "tipo": "despesa",
+  "valorCentavos": 18000,
+  "categoria": "Energia",
+  "descricao": "Conta de energia",
+  "data": "2026-10-29",
+  "origem": "mensagem",
+  "mensagem": {
+    "usuarioId": "ObjectId(...)",
+    "texto": "paguei 180 de energia hoje",
+    "recebidaEm": "2026-10-29T22:20:00Z",
+    "interpretacao": {
+      "tipo": "despesa",
+      "valorCentavos": 18000,
+      "categoria": "Energia",
+      "data": "2026-10-29",
+      "confianca": 0.94
+    },
+    "status": "confirmada"
   },
-  "status": "pendente"
+  "criadoEm": "2026-10-29T22:21:00Z"
 }
 ```
 
@@ -168,7 +162,7 @@ Fala_FinBot/
 ├── prints/               prints das consultas executadas
 └── src/
     ├── config.js         lê a connection string do arquivo .env
-    ├── collections.js    as 4 coleções: regras de validação ($jsonSchema) e índices
+    ├── collections.js    as 3 coleções: regras de validação ($jsonSchema) e índices
     ├── seed-data.js      documentos de exemplo (2 empresas fictícias)
     └── setup.js          cria o banco, as coleções, os índices e insere os exemplos
 ```
@@ -191,7 +185,7 @@ git clone <endereço deste repositório>
 cd Fala_FinBot
 npm install
 cp .env.example .env      # depois edite o .env e cole a sua connection string, terminando em /finbot
-npm run setup             # cria o banco "finbot", as 4 coleções, os índices e os exemplos
+npm run setup             # cria o banco "finbot", as 3 coleções, os índices e os exemplos
 ```
 
 O arquivo `.env` não vai para o repositório (está no `.gitignore`), então a senha do banco fica só na sua máquina.
@@ -199,7 +193,7 @@ O arquivo `.env` não vai para o repositório (está no `.gitignore`), então a 
 | Comando | O que faz |
 |---|---|
 | `npm run setup` | Cria o que falta. Coleções que já têm dados não são alteradas |
-| `npm run setup:reset` | Apaga as 4 coleções e cria tudo de novo |
+| `npm run setup:reset` | Apaga as 3 coleções e cria tudo de novo |
 
 Depois do `npm run setup`, os dados aparecem no Atlas em **Database, Browse Collections, finbot**.
 

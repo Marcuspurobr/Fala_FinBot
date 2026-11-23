@@ -1,4 +1,4 @@
-// Definição das 4 coleções do banco "finbot".
+// Definição das 3 coleções do banco "finbot".
 // Cada coleção tem:
 //   - validator: regras ($jsonSchema) que o MongoDB confere antes de aceitar um documento;
 //   - indexes: índices para buscas rápidas e para garantir valores únicos.
@@ -81,36 +81,10 @@ export const collections = [
   },
 
   {
-    // Mensagens: tudo que chega pelo chat, ANTES de virar lançamento.
-    // Guarda o texto original e o que a IA entendeu (a "interpretacao").
-    name: "mensagens",
-    validator: document(["empresaId", "usuarioId", "texto", "recebidaEm", "status"], {
-      empresaId: objectId,
-      usuarioId: objectId,
-      texto: string,
-      recebidaEm: date,
-      // Resposta da IA. Ausente quando a IA não conseguiu entender a mensagem
-      interpretacao: subdocument(["tipo", "valorCentavos", "categoria", "data", "confianca"], {
-        tipo: oneOf("receita", "despesa"),
-        valorCentavos: cents,
-        categoria: string,
-        data: pattern(DAY),
-        confianca: { bsonType: "number", minimum: 0, maximum: 1 },
-      }),
-      // pendente: aguardando o dono | confirmada: o dono disse "sim" | corrigida: o dono ajustou
-      // automatica: gravada sem perguntar (confiança alta) | descartada: o dono recusou
-      status: oneOf("pendente", "confirmada", "corrigida", "automatica", "descartada"),
-      lancamentoId: objectId, // preenchido quando a mensagem virou lançamento
-    }),
-    indexes: [
-      { key: { empresaId: 1, status: 1, recebidaEm: -1 }, name: "empresa_status_data" },
-      { key: { usuarioId: 1, recebidaEm: -1 }, name: "mensagens_do_usuario" },
-    ],
-  },
-
-  {
     // Lançamentos: o registro oficial de receitas e despesas. É daqui que sai o painel.
-    // Os campos opcionais (parcelas, recorrencia, comprovante, tags) variam de documento para documento.
+    // Quando o lançamento veio do chat, a mensagem original (texto, interpretação da IA e status)
+    // fica embutida no campo "mensagem". Não existe coleção separada para mensagens.
+    // Os campos opcionais (mensagem, parcelas, recorrencia, comprovante, tags) variam de documento para documento.
     name: "lancamentos",
     validator: {
       ...document(
@@ -123,7 +97,23 @@ export const collections = [
           descricao: string,
           data: pattern(DAY),
           origem: oneOf("mensagem", "site"),
-          mensagemId: objectId, // só quando origem = "mensagem"
+          // Mensagem de chat que gerou o lançamento (só quando origem = "mensagem")
+          mensagem: subdocument(["usuarioId", "texto", "recebidaEm", "status"], {
+            usuarioId: objectId,
+            texto: string,
+            recebidaEm: date,
+            // Resposta da IA. Ausente quando a IA não conseguiu entender a mensagem
+            interpretacao: subdocument(["tipo", "valorCentavos", "categoria", "data", "confianca"], {
+              tipo: oneOf("receita", "despesa"),
+              valorCentavos: cents,
+              categoria: string,
+              data: pattern(DAY),
+              confianca: { bsonType: "number", minimum: 0, maximum: 1 },
+            }),
+            // confirmada: o dono disse "sim" | corrigida: o dono ajustou algum campo
+            // automatica: gravada sem perguntar (confiança alta)
+            status: oneOf("confirmada", "corrigida", "automatica"),
+          }),
           // ---- campos opcionais ----
           parcelas: subdocument(["total", "atual"], {
             total: { bsonType: "int", minimum: 2 },
@@ -141,16 +131,18 @@ export const collections = [
           criadoEm: date,
         }
       ),
-      // Veio do chat => tem mensagemId. Veio do site => não tem
+      // Veio do chat => tem mensagem. Veio do site => não tem
       $or: [
-        { origem: "mensagem", mensagemId: { $exists: true } },
-        { origem: "site", mensagemId: { $exists: false } },
+        { origem: "mensagem", mensagem: { $exists: true } },
+        { origem: "site", mensagem: { $exists: false } },
       ],
     },
     indexes: [
       { key: { empresaId: 1, data: -1 }, name: "empresa_data" },
       { key: { empresaId: 1, tipo: 1, categoria: 1, data: 1 }, name: "empresa_tipo_categoria_data" },
-      { key: { mensagemId: 1 }, name: "mensagem_de_origem", sparse: true },
+      // Só para lançamentos vindos do chat: mensagens de um usuário e status das mensagens por empresa
+      { key: { "mensagem.usuarioId": 1, "mensagem.recebidaEm": -1 }, name: "mensagens_do_usuario", sparse: true },
+      { key: { empresaId: 1, "mensagem.status": 1 }, name: "empresa_status_mensagem", sparse: true },
     ],
   },
 ];

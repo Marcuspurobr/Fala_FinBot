@@ -1,7 +1,7 @@
-// Cria o banco "finbot", as 4 coleções (com validação e índices) e insere os documentos de exemplo.
+// Cria o banco "finbot", as 3 coleções (com validação e índices) e insere os documentos de exemplo.
 //
 //   npm run setup        -> cria o que falta; coleções que já têm dados não são mexidas
-//   npm run setup:reset  -> apaga as 4 coleções e cria tudo de novo
+//   npm run setup:reset  -> apaga as 3 coleções e cria tudo de novo
 import { pathToFileURL } from "node:url";
 import { MongoClient } from "mongodb";
 import { collections } from "./collections.js";
@@ -33,7 +33,7 @@ export async function setupDatabase(db, { reset = false } = {}) {
   }
 
   // 2) Documentos de exemplo (só em coleções vazias).
-  // A ordem importa só para leitura: empresas -> usuários -> mensagens -> lançamentos
+  // A ordem importa só para leitura: empresas -> usuários -> lançamentos
   const seed = buildSeedData();
   const summary = [];
   for (const { name } of collections) {
