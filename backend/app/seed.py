@@ -4,6 +4,7 @@ Todos os dados (empresas, e-mails, IDs de chat, valores) são inventados.
 """
 from datetime import datetime, timezone
 
+import bcrypt
 from bson import ObjectId
 
 
@@ -16,8 +17,9 @@ def reais(value: float) -> int:
     return round(value * 100)
 
 
-# Hash de exemplo (parece um bcrypt, mas não é de nenhuma senha real)
-FAKE_HASH = "$2b$12$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ0123456"
+# Senha de demonstração dos dois usuários de exemplo (fictícia, só para testar o login).
+# No banco fica apenas o hash bcrypt, nunca a senha em texto.
+SENHA_DEMO = "senha123"
 
 # Cada linha: (data, tipo, categoria, descrição, valor em reais)
 # Fica de fora o que foi lançado pelo chat (vem mais abaixo, com a mensagem embutida).
@@ -132,6 +134,7 @@ def build_seed_data() -> dict[str, list[dict]]:
     ]
 
     # ---------- Usuários ----------
+    senha_hash = bcrypt.hashpw(SENHA_DEMO.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     maria = ObjectId()
     carlos = ObjectId()
 
@@ -141,7 +144,7 @@ def build_seed_data() -> dict[str, list[dict]]:
             "empresaId": padaria,
             "nome": "Maria Souza",
             "email": "maria@paoquente.example",
-            "senhaHash": FAKE_HASH,
+            "senhaHash": senha_hash,
             "canalMensagem": {"tipo": "telegram", "id": "100000001"},
             "criadoEm": at("2026-08-01T09:05:00Z"),
         },
@@ -150,7 +153,7 @@ def build_seed_data() -> dict[str, list[dict]]:
             "empresaId": modas,
             "nome": "Carlos Lima",
             "email": "carlos@estacao.example",
-            "senhaHash": FAKE_HASH,
+            "senhaHash": senha_hash,
             "canalMensagem": {"tipo": "whatsapp", "id": "+5534999990001"},
             "criadoEm": at("2026-08-03T14:10:00Z"),
         },

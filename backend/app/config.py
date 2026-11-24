@@ -24,3 +24,10 @@ def require_mongo_uri() -> str:
     if not uri:
         sys.exit("MONGODB_URI não configurada no arquivo backend/.env.")
     return uri
+
+
+def require_redis_url() -> str:
+    url = os.environ.get("REDIS_URL")
+    if not url:
+        sys.exit("REDIS_URL não configurada no arquivo backend/.env.")
+    return url

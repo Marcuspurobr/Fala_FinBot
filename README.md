@@ -1,6 +1,6 @@
 # Fala_FinBot: modelo de dados em MongoDB
 
-Repositório acadêmico da disciplina de NoSQL. Ele reúne a descrição do sistema **Fala_FinBot** (nome provisório) e o código em Python que cria o banco, as coleções e documentos de exemplo no MongoDB online (MongoDB Atlas) e que expõe as duas agregações em uma API.
+Repositório acadêmico da disciplina de NoSQL. Ele reúne a descrição do sistema **Fala_FinBot** (nome provisório) e o código em Python que cria o banco, as coleções e documentos de exemplo no MongoDB online (MongoDB Atlas) e que expõe as duas agregações em uma API, com login em cache no Redis.
 
 ## 1. Descrição do sistema
 
@@ -158,7 +158,7 @@ Fala_FinBot/
 ├── .gitignore                impede que o .env (com a senha) e a pasta .venv subam para o GitHub
 ├── prints/                   prints das consultas executadas
 └── backend/
-    ├── requirements.txt      dependências do Python (FastAPI, pymongo, uvicorn, python-dotenv)
+    ├── requirements.txt      dependências do Python (FastAPI, pymongo, uvicorn, redis, bcrypt)
     ├── .env.example          modelo do arquivo .env (a connection string)
     └── app/
         ├── config.py         lê a connection string do arquivo .env
@@ -166,13 +166,16 @@ Fala_FinBot/
         ├── schemas.py        as 3 coleções: regras de validação ($jsonSchema) e índices
         ├── seed.py           documentos de exemplo (2 empresas fictícias)
         ├── setup_db.py       cria o banco, as coleções, os índices e insere os exemplos
+        ├── redis_client.py   conexão com o Redis
+        ├── bloom.py          Bloom Filter com os e-mails cadastrados
+        ├── auth.py           confere a senha (bcrypt) e guarda a sessão no Redis
         ├── queries.py        as 2 agregações (Funcionalidade1 e Funcionalidade2)
-        └── main.py           a API (FastAPI) que expõe as agregações
+        └── main.py           a API (FastAPI): agregações e login
 ```
 
 ## 5. Como rodar
 
-Você precisa do [Python](https://www.python.org) 3.10 ou mais novo e de uma conta gratuita no [MongoDB Atlas](https://www.mongodb.com/cloud/atlas/register).
+Você precisa do [Python](https://www.python.org) 3.10 ou mais novo, de uma conta gratuita no [MongoDB Atlas](https://www.mongodb.com/cloud/atlas/register) e de uma conta gratuita no [Redis Cloud](https://redis.io/cloud) (o plano gratuito já inclui o módulo de Bloom Filter).
 
 ### Criar o banco online
 
@@ -180,6 +183,11 @@ Você precisa do [Python](https://www.python.org) 3.10 ou mais novo e de uma con
 2. Crie o usuário do banco (usuário e senha) e guarde a senha.
 3. Em **Network Access**, adicione o seu IP com **Add Current IP Address**.
 4. Em **Database, Connect, Drivers**, copie a connection string (`mongodb+srv://...`) e troque `<db_password>` pela senha do passo 2.
+
+### Criar o Redis online
+
+1. No Redis Cloud, crie uma database no plano gratuito (30 MB).
+2. Copie a URL de conexão (`redis://default:SENHA@host:porta`).
 
 ### Configurar e executar
 
@@ -189,12 +197,12 @@ cd Fala_FinBot/backend
 python -m venv .venv
 .venv\Scripts\activate           # no Linux ou Mac: source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env              # depois edite o .env e cole a sua connection string, terminando em /finbot
+cp .env.example .env              # depois edite o .env: cole a connection string do MongoDB (terminando em /finbot) e a URL do Redis
 python -m app.setup_db            # cria o banco "finbot", as 3 coleções, os índices e os exemplos
 uvicorn app.main:app --reload     # sobe a API em http://localhost:8000
 ```
 
-O arquivo `.env` não vai para o repositório (está no `.gitignore`), então a senha do banco fica só na sua máquina.
+O arquivo `.env` não vai para o repositório (está no `.gitignore`), então as senhas dos bancos ficam só na sua máquina.
 
 | Comando | O que faz |
 |---|---|
@@ -203,7 +211,7 @@ O arquivo `.env` não vai para o repositório (está no `.gitignore`), então a 
 
 Depois do `setup_db`, os dados aparecem no Atlas em **Database, Browse Collections, finbot**.
 
-Todos os dados de exemplo (empresas, e-mails, identificadores de chat, valores) são fictícios. O hash de senha dos usuários de exemplo também é inventado e não corresponde a nenhuma senha real.
+Todos os dados de exemplo (empresas, e-mails, identificadores de chat, valores) são fictícios. Os dois usuários de exemplo têm a senha de demonstração `senha123`, que serve só para testar o login. No banco fica apenas o hash bcrypt dela.
 
 
 ## 6. Consultas (views)
@@ -262,7 +270,7 @@ O backend em Python (FastAPI) está em `backend/`. Ele executa as duas agregaç�
 
 | Rota | O que devolve |
 |---|---|
-| `GET /health` | Confere se a API consegue falar com o banco |
+| `GET /health` | Confere se a API consegue falar com o MongoDB e com o Redis |
 | `GET /api/funcionalidade1` | Despesas por categoria, da maior para a menor (`categoria` e `totalCentavos`) |
 | `GET /api/funcionalidade2` | Receitas, despesas e saldo de cada mês (`mes`, `receitasCentavos`, `despesasCentavos` e `saldoCentavos`) |
 
@@ -270,6 +278,23 @@ As duas rotas aceitam o parâmetro opcional `empresaId` (por exemplo, `/api/func
 
 Com a API no ar, a documentação interativa, onde dá para testar as rotas pelo navegador, fica em `http://localhost:8000/docs`.
 
-### Próxima entrega: cache com Redis
+## 8. Login com Redis: Bloom Filter e sessão em cache
 
-Os pipelines ficam isolados em `backend/app/queries.py`, e as rotas só chamam essas funções. É ali que o cache vai entrar: antes de consultar o MongoDB, a função procura o resultado no Redis, em uma chave por consulta e empresa (por exemplo, `fin:f1:{empresaId}`), com tempo de expiração. O cache será invalidado quando um lançamento novo for gravado, para o painel não mostrar número velho.
+O login usa o Redis de duas formas.
+
+**Bloom Filter.** O Bloom Filter é uma estrutura probabilística que guarda um conjunto de itens ocupando pouquíssima memória. Aqui ele guarda os e-mails cadastrados, em uma chave `bf:emails`, com 1% de taxa de erro. Ele responde a uma pergunta só: "esse e-mail existe?". A resposta "não existe" é sempre verdadeira, então o login é recusado na hora, sem consultar o MongoDB. A resposta "provavelmente existe" pode ser um falso positivo, então a API confere no MongoDB, que tem a palavra final. O filtro nunca esquece um e-mail cadastrado, mas também não permite remover um. Ele é criado e carregado com os e-mails de `usuarios` toda vez que a API sobe.
+
+**Sessão em cache.** Com e-mail e senha corretos, a API gera um token aleatório e guarda a sessão no Redis, na chave `sessao:{token}`, com expiração de 30 minutos. As próximas requisições leem a sessão direto do Redis, sem consultar o MongoDB, e quando o tempo acaba o Redis apaga a sessão sozinho.
+
+| Rota | O que faz |
+|---|---|
+| `POST /api/login` | Recebe `email` e `senha`. Devolve o `token` e o tempo de expiração, ou erro 401 (a mensagem é sempre a mesma, "e-mail ou senha inválidos") |
+| `GET /api/me` | Com o cabeçalho `Authorization: Bearer <token>`, devolve os dados da sessão, lidos do Redis |
+| `POST /api/logout` | Apaga a sessão do Redis |
+| `GET /api/bloom/verificar?email=...` | Só para demonstração: mostra se o filtro responde "não existe" ou "provavelmente existe" |
+
+Para testar pelo `/docs`, faça o login com `maria@paoquente.example` e a senha `senha123`, copie o `token` e cole no campo `authorization` da rota `/api/me`, escrevendo `Bearer ` antes do token.
+
+### Próximas etapas
+
+A mesma camada de Redis pode receber as outras estruturas probabilísticas: HyperLogLog para contar usuários ativos por dia e Count-Min Sketch para contar a frequência de uso. O cache das agregações também entra em `backend/app/queries.py`, com uma chave por consulta e empresa (por exemplo, `fin:f1:{empresaId}`), tempo de expiração e invalidação quando um lançamento novo for gravado.
