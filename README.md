@@ -1,6 +1,6 @@
 # Fala_FinBot: modelo de dados em MongoDB
 
-Repositório acadêmico da disciplina de NoSQL. Ele reúne a descrição do sistema **Fala_FinBot** (nome provisório) e o código que cria o banco, as coleções e documentos de exemplo no MongoDB online (MongoDB Atlas).
+Repositório acadêmico da disciplina de NoSQL. Ele reúne a descrição do sistema **Fala_FinBot** (nome provisório) e o código em Python que cria o banco, as coleções e documentos de exemplo no MongoDB online (MongoDB Atlas) e que expõe as duas agregações em uma API.
 
 ## 1. Descrição do sistema
 
@@ -40,7 +40,7 @@ Para ser honesto, esse sistema também poderia ser feito em um banco relacional,
 
 O modelo tem 3 coleções. Os objetos que só fazem sentido dentro de um documento ficam embutidos nele, e o que precisa existir sozinho ou ser consultado por conta própria fica em outra coleção, ligado por identificador. A mensagem do chat não tem coleção própria: ela fica embutida no lançamento que gerou.
 
-Os nomes no diagrama representam documentos das coleções, e as linhas indicam referências por identificador (o MongoDB não impõe integridade referencial, então quem mantém essas referências é a aplicação). As regras de validação e os índices estão em `src/collections.js`.
+Os nomes no diagrama representam documentos das coleções, e as linhas indicam referências por identificador (o MongoDB não impõe integridade referencial, então quem mantém essas referências é a aplicação). As regras de validação e os índices estão em `backend/app/schemas.py`.
 
 ```mermaid
 erDiagram
@@ -154,22 +154,25 @@ Um exemplo de documento da coleção `lancamentos`, vindo do chat:
 
 ```
 Fala_FinBot/
-├── README.md             este arquivo
-├── .env.example          modelo do arquivo .env (a connection string)
-├── .gitignore            impede que o .env (com a senha) e o node_modules subam para o GitHub
-├── package.json          dependências e scripts do projeto
-├── package-lock.json     versões exatas das dependências instaladas
-├── prints/               prints das consultas executadas
-└── src/
-    ├── config.js         lê a connection string do arquivo .env
-    ├── collections.js    as 3 coleções: regras de validação ($jsonSchema) e índices
-    ├── seed-data.js      documentos de exemplo (2 empresas fictícias)
-    └── setup.js          cria o banco, as coleções, os índices e insere os exemplos
+├── README.md                 este arquivo
+├── .gitignore                impede que o .env (com a senha) e a pasta .venv subam para o GitHub
+├── prints/                   prints das consultas executadas
+└── backend/
+    ├── requirements.txt      dependências do Python (FastAPI, pymongo, uvicorn, python-dotenv)
+    ├── .env.example          modelo do arquivo .env (a connection string)
+    └── app/
+        ├── config.py         lê a connection string do arquivo .env
+        ├── db.py             conexão com o MongoDB
+        ├── schemas.py        as 3 coleções: regras de validação ($jsonSchema) e índices
+        ├── seed.py           documentos de exemplo (2 empresas fictícias)
+        ├── setup_db.py       cria o banco, as coleções, os índices e insere os exemplos
+        ├── queries.py        as 2 agregações (Funcionalidade1 e Funcionalidade2)
+        └── main.py           a API (FastAPI) que expõe as agregações
 ```
 
 ## 5. Como rodar
 
-Você precisa do [Node.js](https://nodejs.org) 22.9 ou mais novo e de uma conta gratuita no [MongoDB Atlas](https://www.mongodb.com/cloud/atlas/register).
+Você precisa do [Python](https://www.python.org) 3.10 ou mais novo e de uma conta gratuita no [MongoDB Atlas](https://www.mongodb.com/cloud/atlas/register).
 
 ### Criar o banco online
 
@@ -182,27 +185,30 @@ Você precisa do [Node.js](https://nodejs.org) 22.9 ou mais novo e de uma conta 
 
 ```bash
 git clone <endereço deste repositório>
-cd Fala_FinBot
-npm install
-cp .env.example .env      # depois edite o .env e cole a sua connection string, terminando em /finbot
-npm run setup             # cria o banco "finbot", as 3 coleções, os índices e os exemplos
+cd Fala_FinBot/backend
+python -m venv .venv
+.venv\Scripts\activate           # no Linux ou Mac: source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env              # depois edite o .env e cole a sua connection string, terminando em /finbot
+python -m app.setup_db            # cria o banco "finbot", as 3 coleções, os índices e os exemplos
+uvicorn app.main:app --reload     # sobe a API em http://localhost:8000
 ```
 
 O arquivo `.env` não vai para o repositório (está no `.gitignore`), então a senha do banco fica só na sua máquina.
 
 | Comando | O que faz |
 |---|---|
-| `npm run setup` | Cria o que falta. Coleções que já têm dados não são alteradas |
-| `npm run setup:reset` | Apaga as 3 coleções e cria tudo de novo |
+| `python -m app.setup_db` | Cria o que falta. Coleções que já têm dados não são alteradas |
+| `python -m app.setup_db --reset` | Apaga as 3 coleções e cria tudo de novo |
 
-Depois do `npm run setup`, os dados aparecem no Atlas em **Database, Browse Collections, finbot**.
+Depois do `setup_db`, os dados aparecem no Atlas em **Database, Browse Collections, finbot**.
 
 Todos os dados de exemplo (empresas, e-mails, identificadores de chat, valores) são fictícios. O hash de senha dos usuários de exemplo também é inventado e não corresponde a nenhuma senha real.
 
 
 ## 6. Consultas (views)
 
-As duas consultas abaixo foram criadas no MongoDB Atlas como views da coleção `lancamentos`. Cada uma é um aggregation pipeline, ou seja, uma sequência de estágios em que a saída de um alimenta o próximo. Os valores estão guardados em centavos.
+As duas consultas abaixo foram criadas no MongoDB Atlas como views da coleção `lancamentos`. Cada uma é um aggregation pipeline, ou seja, uma sequência de estágios em que a saída de um alimenta o próximo. Os valores estão guardados em centavos. As mesmas agregações também são executadas pela API, descrita na seção 7.
 
 ### View `Funcionalidade1`: despesas por categoria
 
@@ -249,3 +255,21 @@ Compara receitas e despesas de cada mês e calcula o saldo (receitas menos despe
 Com os dados de exemplo, os meses de agosto a outubro fecham com saldo positivo. Novembro aparece negativo porque os lançamentos de exemplo só vão até o início do mês e as despesas dos primeiros dias vieram antes das vendas.
 
 ![Resultado da view Funcionalidade2](prints/Funcionalidade2.png)
+
+## 7. API
+
+O backend em Python (FastAPI) está em `backend/`. Ele executa as duas agregações direto no MongoDB, com os mesmos pipelines das views, e devolve o resultado em JSON. Os valores continuam em centavos.
+
+| Rota | O que devolve |
+|---|---|
+| `GET /health` | Confere se a API consegue falar com o banco |
+| `GET /api/funcionalidade1` | Despesas por categoria, da maior para a menor (`categoria` e `totalCentavos`) |
+| `GET /api/funcionalidade2` | Receitas, despesas e saldo de cada mês (`mes`, `receitasCentavos`, `despesasCentavos` e `saldoCentavos`) |
+
+As duas rotas aceitam o parâmetro opcional `empresaId` (por exemplo, `/api/funcionalidade1?empresaId=...`), que restringe o resultado a uma empresa. Sem ele, o resultado considera todas, igual às views do Atlas. Um `empresaId` que não seja um identificador válido devolve erro 422.
+
+Com a API no ar, a documentação interativa, onde dá para testar as rotas pelo navegador, fica em `http://localhost:8000/docs`.
+
+### Próxima entrega: cache com Redis
+
+Os pipelines ficam isolados em `backend/app/queries.py`, e as rotas só chamam essas funções. É ali que o cache vai entrar: antes de consultar o MongoDB, a função procura o resultado no Redis, em uma chave por consulta e empresa (por exemplo, `fin:f1:{empresaId}`), com tempo de expiração. O cache será invalidado quando um lançamento novo for gravado, para o painel não mostrar número velho.
