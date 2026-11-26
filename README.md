@@ -156,7 +156,7 @@ Um exemplo de documento da coleção `lancamentos`, vindo do chat:
 Fala_FinBot/
 ├── README.md                 este arquivo
 ├── .gitignore                impede que o .env (com a senha) e a pasta .venv subam para o GitHub
-├── prints/                   prints das consultas executadas
+├── prints/                   prints das consultas (MongoDB) e dos testes com Redis (Reddis)
 └── backend/
     ├── requirements.txt      dependências do Python (FastAPI, pymongo, uvicorn, redis, bcrypt)
     ├── .env.example          modelo do arquivo .env (a connection string)
@@ -169,8 +169,9 @@ Fala_FinBot/
         ├── redis_client.py   conexão com o Redis
         ├── bloom.py          Bloom Filter com os e-mails cadastrados
         ├── auth.py           confere a senha (bcrypt) e guarda a sessão no Redis
+        ├── estatisticas.py   usuários únicos por dia (HyperLogLog)
         ├── queries.py        as 2 agregações (Funcionalidade1 e Funcionalidade2)
-        └── main.py           a API (FastAPI): agregações e login
+        └── main.py           a API (FastAPI): agregações, login e estatísticas
 ```
 
 ## 5. Como rodar
@@ -236,9 +237,9 @@ Mostra quanto foi gasto em cada categoria, da maior despesa para a menor. Serve 
 
 Com os dados de exemplo, a categoria com maior gasto é Fornecedores, e a menor é Internet. Como a coleção reúne as duas empresas de exemplo, categorias com o mesmo nome (como Aluguel) aparecem somadas.
 
-![Resultado da view Funcionalidade1, parte 1](prints/Funcionalidade1_1.png)
+![Resultado da view Funcionalidade1, parte 1](prints/MongoDB/Funcionalidade1_1.png)
 
-![Resultado da view Funcionalidade1, parte 2](prints/Funcionalidade1_2.png)
+![Resultado da view Funcionalidade1, parte 2](prints/MongoDB/Funcionalidade1_2.png)
 
 ### View `Funcionalidade2`: resumo mensal
 
@@ -262,7 +263,7 @@ Compara receitas e despesas de cada mês e calcula o saldo (receitas menos despe
 
 Com os dados de exemplo, os meses de agosto a outubro fecham com saldo positivo. Novembro aparece negativo porque os lançamentos de exemplo só vão até o início do mês e as despesas dos primeiros dias vieram antes das vendas.
 
-![Resultado da view Funcionalidade2](prints/Funcionalidade2.png)
+![Resultado da view Funcionalidade2](prints/MongoDB/Funcionalidade2.png)
 
 ## 7. API
 
@@ -293,8 +294,45 @@ O login usa o Redis de duas formas.
 | `POST /api/logout` | Apaga a sessão do Redis |
 | `GET /api/bloom/verificar?email=...` | Só para demonstração: mostra se o filtro responde "não existe" ou "provavelmente existe" |
 
-Para testar pelo `/docs`, faça o login com `maria@paoquente.example` e a senha `senha123`, copie o `token` e cole no campo `authorization` da rota `/api/me`, escrevendo `Bearer ` antes do token.
+Para testar pelo `/docs`, faça o login com `maria@paoquente.example` e a senha `senha123`, copie o `token`, clique no botão **Authorize** (no topo da página), cole só o token e confirme. Depois execute a rota `/api/me`.
 
-### Próximas etapas
+### Testes do login
 
-A mesma camada de Redis pode receber as outras estruturas probabilísticas: HyperLogLog para contar usuários ativos por dia e Count-Min Sketch para contar a frequência de uso. O cache das agregações também entra em `backend/app/queries.py`, com uma chave por consulta e empresa (por exemplo, `fin:f1:{empresaId}`), tempo de expiração e invalidação quando um lançamento novo for gravado.
+Login correto: a API devolve o token e cria a sessão no Redis, com 1800 segundos de validade.
+
+![Login com sucesso](prints/Reddis/login-sucesso.png)
+
+Sessão em cache: a rota `/api/me` lê os dados direto do Redis, e o tempo restante já aparece menor que 1800.
+
+![Sessão lida do cache](prints/Reddis/sessao-cache.png)
+
+Login recusado: a mensagem é a mesma para e-mail inexistente e para senha errada.
+
+![Login recusado](prints/Reddis/login_falhou.png)
+
+Bloom Filter com um e-mail que não está cadastrado: a resposta "não existe" é certa, e o login pararia aqui, sem consultar o MongoDB.
+
+![Bloom Filter: e-mail não existe](prints/Reddis/bloom-nao-existe.png)
+
+Bloom Filter com um e-mail cadastrado: a resposta é "provavelmente existe", e a API ainda confirma no MongoDB e confere a senha.
+
+![Bloom Filter: e-mail provavelmente existe](prints/Reddis/bloom-provavelmente-existe.png)
+
+## 9. Estatísticas de uso: HyperLogLog
+
+O sistema conta quantos usuários diferentes entraram em cada dia usando o HyperLogLog, uma estrutura probabilística que conta itens distintos sem guardar a lista deles. A cada login correto, a API adiciona o identificador do usuário (`PFADD`) em uma chave do dia, `stats:usuarios-unicos:AAAA-MM-DD`. Quem entra várias vezes no mesmo dia é contado uma vez só. A consulta usa `PFCOUNT`.
+
+Cada chave ocupa no máximo uns 12 KB, com dez usuários ou com milhões. Em troca, o número é uma estimativa, com erro típico perto de 1%.
+
+| Rota | O que devolve |
+|---|---|
+| `GET /api/estatisticas` | `data` e `usuariosUnicosEstimados` de hoje |
+| `GET /api/estatisticas?data=2026-11-26` | O mesmo, para o dia informado |
+
+Para testar, faça login com `maria@paoquente.example` duas vezes e consulte a rota: o resultado é 1. Depois faça login com `carlos@estacao.example` (mesma senha) e consulte de novo: passa a ser 2.
+
+![Usuários únicos do dia com HyperLogLog](prints/Reddis/estatisticas-hyperloglog.png)
+
+## 10. Próximas etapas
+
+O Count-Min Sketch pode entrar na mesma camada de Redis para contar a frequência de uso. O cache das agregações também entra em `backend/app/queries.py`, com uma chave por consulta e empresa (por exemplo, `fin:f1:{empresaId}`), tempo de expiração e invalidação quando um lançamento novo for gravado.

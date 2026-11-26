@@ -5,15 +5,17 @@
 A documentação interativa fica em http://localhost:8000/docs
 """
 from contextlib import asynccontextmanager
+from datetime import date
 from typing import Annotated
 
 import redis
 from bson import ObjectId
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from pymongo.database import Database
 
-from . import auth, bloom, queries
+from . import auth, bloom, estatisticas, queries
 from .db import get_db
 from .redis_client import get_redis
 
@@ -85,6 +87,7 @@ def login(dados: LoginIn, db: Db, r: Redis):
     1. O Bloom Filter responde primeiro: se o e-mail "não está", recusa sem consultar o MongoDB.
     2. Se "provavelmente está", o MongoDB confirma (o filtro pode ter dado um falso positivo).
     3. Com a senha certa, cria a sessão no Redis com tempo de expiração.
+    4. Anota o usuário na estatística do dia (HyperLogLog).
     """
     if not bloom.provavelmente_existe(r, dados.email):
         raise CREDENCIAIS_INVALIDAS
@@ -94,33 +97,51 @@ def login(dados: LoginIn, db: Db, r: Redis):
         raise CREDENCIAIS_INVALIDAS
 
     token = auth.criar_sessao(r, usuario)
+    estatisticas.registrar_acesso(r, str(usuario["_id"]))
     return {"token": token, "expiraEmSegundos": auth.EXPIRA_EM_SEGUNDOS}
 
 
-def _token(authorization: str | None) -> str:
-    partes = (authorization or "").split(" ", 1)
-    if len(partes) != 2 or partes[0].lower() != "bearer" or not partes[1]:
+# Faz o /docs mostrar o botão "Authorize" e enviar o cabeçalho Authorization: Bearer <token>
+bearer = HTTPBearer(auto_error=False, description="Token devolvido pelo login")
+
+
+def _token(credenciais: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> str:
+    if credenciais is None:
         raise HTTPException(status_code=401, detail="envie o cabeçalho Authorization: Bearer <token>")
-    return partes[1]
+    return credenciais.credentials
 
 
-Authorization = Annotated[str | None, Header(description="Bearer <token> devolvido pelo login")]
+Token = Annotated[str, Depends(_token)]
 
 
 @app.get("/api/me", summary="Usuário da sessão")
-def me(r: Redis, authorization: Authorization = None):
+def me(r: Redis, token: Token):
     """Devolve os dados da sessão, lidos direto do Redis (sem consultar o MongoDB)."""
-    sessao = auth.ler_sessao(r, _token(authorization))
+    sessao = auth.ler_sessao(r, token)
     if sessao is None:
         raise HTTPException(status_code=401, detail="sessão inválida ou expirada")
     return sessao
 
 
 @app.post("/api/logout", summary="Logout")
-def logout(r: Redis, authorization: Authorization = None):
+def logout(r: Redis, token: Token):
     """Apaga a sessão do Redis."""
-    auth.apagar_sessao(r, _token(authorization))
+    auth.apagar_sessao(r, token)
     return {"status": "sessão encerrada"}
+
+
+# ---------- Estatísticas de uso (HyperLogLog) ----------
+@app.get("/api/estatisticas", summary="Usuários únicos por dia")
+def estatisticas_de_uso(
+    r: Redis,
+    dia: Annotated[date | None, Query(alias="data", description="AAAA-MM-DD. Sem ela, considera hoje.")] = None,
+):
+    """Quantos usuários diferentes fizeram login no dia (contagem aproximada)."""
+    dia = dia or date.today()
+    return {
+        "data": dia.isoformat(),
+        "usuariosUnicosEstimados": estatisticas.usuarios_unicos(r, dia),
+    }
 
 
 @app.get("/api/bloom/verificar", summary="Pergunta ao Bloom Filter (demonstração)")
